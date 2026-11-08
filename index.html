@@ -238,9 +238,10 @@
       </div>
       <input type="hidden" name="id">
       <div class="seg" role="radiogroup" aria-label="Race status">
-        <label><input type="radio" name="status" value="completed" checked> Finished it</label>
-        <label><input type="radio" name="status" value="planned"> Signed up / planning</label>
+        <label><input type="radio" name="status" value="planned" required> Haven't raced it yet</label>
+        <label><input type="radio" name="status" value="completed"> Already finished it</label>
       </div>
+      <span class="small muted" id="statusHint">Pick one: is this a race coming up, or one he's already done?</span>
       <div class="form-grid">
         <label class="span-2">Race name <input name="name" required placeholder="e.g. New England Spartan Sprint"></label>
         <label>Date <input name="date" type="date" required></label>

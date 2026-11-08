@@ -190,7 +190,10 @@
   function renderNextRace() {
     const el = $('#nextRace');
     const t = todayISO();
-    const dueResults = planned().filter(r => r.date < t);
+    const noResults = (r) => r.timeSec == null && r.overallPlace == null && r.obstacles == null;
+    const dueResults = planned().filter(r => r.date < t)
+      .concat(completed().filter(noResults))
+      .sort((a, b) => a.date.localeCompare(b.date));
     const next = planned().find(r => r.date >= t);
     if (!next && !dueResults.length) { el.classList.add('hidden'); return; }
     el.classList.remove('hidden');
@@ -534,7 +537,8 @@
     $('#raceDialogTitle').textContent = race ? 'Edit race' : 'Add race';
     $('#deleteRace').classList.toggle('hidden', !race);
     f.id.value = race?.id || '';
-    f.querySelector(`input[name="status"][value="${r.status || 'completed'}"]`).checked = true;
+    // New races start with neither option picked so it's a deliberate choice.
+    $$('#raceForm input[name="status"]').forEach(i => { i.checked = (i.value === r.status); });
     f.name.value = r.name || '';
     f.date.value = r.date || '';
     f.type.value = r.type || 'Sprint';
@@ -556,7 +560,7 @@
     f.failedList.value = (r.failedList || []).join(', ');
     f.notes.value = r.notes || '';
     if (r.lat != null) $('#geocodeStatus').textContent = '📍 Location pinned on map';
-    syncStatusFields();
+    applyDateGuard();
     dlg().showModal();
   }
   function openLogResults(id) {
@@ -569,8 +573,24 @@
     $('#raceDialogTitle').textContent = 'Log results';
   }
   function syncStatusFields() {
-    const planned = $('#raceForm').querySelector('input[name="status"]:checked').value === 'planned';
-    $('#resultsFields').classList.toggle('hidden', planned);
+    const checked = $('#raceForm').querySelector('input[name="status"]:checked');
+    $('#resultsFields').classList.toggle('hidden', !checked || checked.value !== 'completed');
+  }
+  // A race dated in the future can't be finished yet.
+  function applyDateGuard() {
+    const f = $('#raceForm');
+    const done = f.querySelector('input[name="status"][value="completed"]');
+    const plan = f.querySelector('input[name="status"][value="planned"]');
+    const future = f.date.value && f.date.value > todayISO();
+    done.disabled = !!future;
+    if (future) plan.checked = true;
+    const checked = f.querySelector('input[name="status"]:checked');
+    $('#statusHint').textContent = future
+      ? "That date is in the future, so it's saved as a race coming up."
+      : !checked ? "Pick one: is this a race coming up, or one he's already done?"
+      : checked.value === 'planned' ? "It'll show on the dashboard with a countdown. Add results after the race."
+      : '';
+    syncStatusFields();
   }
   function readRaceForm() {
     const f = $('#raceForm');
@@ -921,7 +941,8 @@
     });
 
     // Race form
-    $$('#raceForm input[name="status"]').forEach(i => i.addEventListener('change', syncStatusFields));
+    $$('#raceForm input[name="status"]').forEach(i => i.addEventListener('change', applyDateGuard));
+    $('#raceForm').date.addEventListener('change', applyDateGuard);
     $$('#raceDialog [data-close]').forEach(b => b.addEventListener('click', () => dlg().close()));
     $('#raceForm').addEventListener('submit', (e) => {
       e.preventDefault();
