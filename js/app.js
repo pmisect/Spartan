@@ -9,6 +9,9 @@
   const STORE_KEY = 'spartanTracker.v1';
   const KM_PER_MI = 1.609344;
   const FT_PER_M = 3.28084;
+  // Where "Send to GitHub" feedback goes (owner/repo). Set to '' to hide that option.
+  const FEEDBACK_REPO = 'pmisect/Spartan';
+  const TYPICAL_OBSTACLES = { Sprint: 20, Super: 25, Beast: 30, Ultra: 60, Stadion: 20 };
   const RACE_TYPES = ['Kids', 'Sprint', 'Super', 'Beast', 'Ultra', 'Stadion', 'Trail', 'Other'];
   const TRIFECTA = [
     { type: 'Sprint', spec: '5K · 20 obstacles' },
@@ -22,6 +25,7 @@
     profile: { name: '', birthYear: null, home: null, goalRaces: null },
     settings: { unit: 'mi', theme: null },
     races: [],
+    feedback: [],
   });
 
   let state = load();
@@ -47,6 +51,7 @@
       profile: Object.assign(base.profile, s.profile || {}),
       settings: Object.assign(base.settings, s.settings || {}),
       races: Array.isArray(s.races) ? s.races.filter(r => r && r.id && r.name && r.date) : [],
+      feedback: Array.isArray(s.feedback) ? s.feedback.filter(f => f && f.id && f.text) : [],
     };
   }
   function save() {
@@ -60,7 +65,7 @@
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   const num = (v) => (v === '' || v === null || v === undefined || isNaN(+v)) ? null : +v;
-  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
   const fmtDate = (iso, opts = { month: 'short', day: 'numeric', year: 'numeric' }) => iso ? parseDate(iso).toLocaleDateString(undefined, opts) : 'Date TBD';
   const yearOf = (iso) => +iso.slice(0, 4);
@@ -182,17 +187,38 @@
   function renderNextRace() {
     const el = $('#nextRace');
     const t = todayISO();
+    const dueResults = planned().filter(r => r.date < t);
     const next = planned().find(r => r.date >= t);
-    if (!next) { el.classList.add('hidden'); return; }
-    const days = Math.round((parseDate(next.date) - parseDate(t)) / 86400000);
+    if (!next && !dueResults.length) { el.classList.add('hidden'); return; }
     el.classList.remove('hidden');
-    el.innerHTML = `
-      <div class="count">${days}<small>${days === 1 ? 'day' : 'days'}</small></div>
-      <div>
-        <div class="muted small">NEXT RACE</div>
-        <div><strong>${esc(next.name)}</strong> <span class="tag">${esc(next.type)}</span></div>
-        <div class="small muted">${fmtDate(next.date, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${next.location ? ' · ' + esc(next.location) : ''}</div>
+    let html = '';
+    if (next) {
+      const days = Math.round((parseDate(next.date) - parseDate(t)) / 86400000);
+      const raceDay = days === 0;
+      html += `
+      <div class="next-row ${raceDay ? 'race-day' : ''}">
+        <div class="count">${raceDay ? '🔥' : days}<small>${raceDay ? 'today' : days === 1 ? 'day' : 'days'}</small></div>
+        <div class="next-body">
+          <div class="muted small">${raceDay ? 'RACE DAY — GOOD LUCK! AROO!' : 'NEXT RACE'}</div>
+          <div><strong>${esc(next.name)}</strong> <span class="tag">${esc(next.type)}</span></div>
+          <div class="small muted">${fmtDate(next.date, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${next.location ? ' · ' + esc(next.location) : ''}</div>
+        </div>
+        ${raceDay ? `<button class="btn btn-primary" data-log-results="${esc(next.id)}">Log results</button>` : ''}
       </div>`;
+    }
+    for (const r of dueResults) {
+      html += `
+      <div class="next-row due">
+        <div class="count">🏁<small>done?</small></div>
+        <div class="next-body">
+          <div class="muted small">HOW DID IT GO?</div>
+          <div><strong>${esc(r.name)}</strong> <span class="tag">${esc(r.type)}</span></div>
+          <div class="small muted">${fmtDate(r.date)} · add his time, placing and obstacles</div>
+        </div>
+        <button class="btn btn-primary" data-log-results="${esc(r.id)}">Log results</button>
+      </div>`;
+    }
+    el.innerHTML = html;
   }
 
   function renderKpis(done) {
@@ -501,7 +527,7 @@
     $('#geocodeStatus').textContent = '';
     $$('.unit-label[data-unit="dist"]').forEach(e => e.textContent = `(${distUnit()})`);
     $$('.unit-label[data-unit="elev"]').forEach(e => e.textContent = `(${elevUnit()})`);
-    const r = race || prefill || {};
+    const r = prefill || race || {};
     $('#raceDialogTitle').textContent = race ? 'Edit race' : 'Add race';
     $('#deleteRace').classList.toggle('hidden', !race);
     f.id.value = race?.id || '';
@@ -529,6 +555,15 @@
     if (r.lat != null) $('#geocodeStatus').textContent = '📍 Location pinned on map';
     syncStatusFields();
     dlg().showModal();
+  }
+  function openLogResults(id) {
+    const r = state.races.find(x => x.id === id);
+    if (!r) return;
+    delete $('#raceForm').dataset.eventId;
+    const copy = Object.assign({}, r, { status: 'completed' });
+    if (copy.obstacles == null && TYPICAL_OBSTACLES[r.type]) copy.obstacles = TYPICAL_OBSTACLES[r.type];
+    openRaceDialog(r, copy);
+    $('#raceDialogTitle').textContent = 'Log results';
   }
   function syncStatusFields() {
     const planned = $('#raceForm').querySelector('input[name="status"]:checked').value === 'planned';
@@ -657,6 +692,13 @@
     const t = todayISO();
     return (events.events || []).filter(e => !e.end || e.end >= t);
   }
+  function eventDates(e) {
+    if (!e.start) return 'Date TBD';
+    if (!e.end || e.end === e.start) return fmtDate(e.start);
+    const a = parseDate(e.start), b = parseDate(e.end);
+    const sameMonth = a.getMonth() === b.getMonth();
+    return `${fmtDate(e.start, { month: 'short', day: 'numeric' })}–${sameMonth ? b.getDate() : fmtDate(e.end, { month: 'short', day: 'numeric' })}, ${b.getFullYear()}`;
+  }
   function filteredEvents() {
     const radius = +$('#findRadius').value;
     const type = $('#findType').value;
@@ -695,7 +737,7 @@
     $('#findList').innerHTML = list.length ? list.map(e => `
       <div class="event ${plannedIds.has(e.id) ? 'added' : ''}" data-event="${esc(e.id)}">
         <div class="top"><span class="nm">${esc(e.name)}</span>
-          <span class="dt">${e.start ? fmtDate(e.start, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date TBD'}</span></div>
+          <span class="dt">${eventDates(e)}</span></div>
         <div class="small muted">${esc(e.place)}, ${esc(e.state)}${e.miles != null ? ` · ${Math.round(e.miles).toLocaleString()} mi away` : ''}</div>
         <div class="types">${e.types.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
         <div class="actions">
@@ -724,13 +766,64 @@
     const age = state.profile.birthYear ? new Date().getFullYear() - state.profile.birthYear : null;
     const preferred = (age != null && age < 14 && e.types.includes('Kids')) ? 'Kids'
       : ['Sprint', 'Super', 'Beast', 'Stadion', 'Trail', 'Ultra', 'Kids'].find(t => e.types.includes(t)) || 'Other';
-    const distKm = { Sprint: 5, Super: 10, Beast: 21, Ultra: 50, Stadion: 5 }[preferred] ?? null;
+    const distKm = { Sprint: 5, Super: 10, Beast: 21, Ultra: 50, Stadion: 5, Kids: 1.5 }[preferred] ?? null;
+    const t = todayISO();
+    // If the event weekend is underway, default to today.
+    const date = (e.start && e.end && e.start < t && t <= e.end) ? t : (e.start || '');
+    const base = e.name
+      .replace(/ (OCR|Event|Trifecta) Weekend.*$/i, '')
+      .replace(/ Event$/i, '')
+      .replace(/ Spartan$/i, '');
+    const name = new RegExp('\\b' + preferred + '\\b', 'i').test(base) ? base : `${base} ${preferred}`;
     $('#raceForm').dataset.eventId = id;
     openRaceDialog(null, {
-      status: 'planned', name: e.name.replace(/ (OCR|Event) Weekend.*$/, '').replace(/ Trifecta Weekend.*$/, '') + ` ${preferred}`,
-      date: e.start || '', type: preferred, location: `${e.place}, ${e.state}`, lat: e.lat, lon: e.lon, distanceKm: distKm,
+      status: 'planned', name,
+      date, type: preferred, location: `${e.place}, ${e.state}`, lat: e.lat, lon: e.lon, distanceKm: distKm,
       heat: preferred === 'Kids' ? 'Kids' : 'Open',
     });
+  }
+
+  // ---------- Feedback ----------
+  function openFeedback() {
+    const f = $('#feedbackForm');
+    f.reset();
+    f.elements.from.value = state.profile.name || '';
+    $('#feedbackStatus').textContent = '';
+    $('#fbGithub').classList.toggle('hidden', !FEEDBACK_REPO);
+    $('#feedbackDialog').showModal();
+    f.elements.text.focus();
+  }
+  function readFeedback() {
+    const f = $('#feedbackForm').elements;
+    const text = f.text.value.trim();
+    if (!text) { $('#feedbackStatus').textContent = 'Type your idea first.'; f.text.focus(); return null; }
+    const item = { id: uid(), date: todayISO(), kind: f.kind.value, from: f.from.value.trim(), text, sent: null };
+    state.feedback.unshift(item);
+    save(); renderFeedbackList();
+    return item;
+  }
+  function githubIssueUrl(item) {
+    const title = `${item.kind}: ${item.text.split('\n')[0].slice(0, 70)}`;
+    const body = `${item.text}\n\n---\nFrom: ${item.from || 'Anonymous'}\nDate: ${item.date}\nSent from the Spartan Tracker feedback box.`;
+    return `https://github.com/${FEEDBACK_REPO}/issues/new?labels=feedback&title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+  }
+  async function shareFeedback(item) {
+    const text = `Spartan Tracker idea (${item.kind})\n${item.text}\n— ${item.from || 'Anonymous'}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Spartan Tracker idea', text }); return 'shared'; }
+      catch (e) { if (e && e.name === 'AbortError') return 'cancelled'; }
+    }
+    try { await navigator.clipboard.writeText(text); return 'copied'; } catch (e) { return 'failed'; }
+  }
+  function renderFeedbackList() {
+    const list = state.feedback || [];
+    $('#feedbackCount').textContent = list.length ? `(${list.length})` : '';
+    $('#feedbackList').innerHTML = list.length ? list.map(f => `
+      <li>
+        <div><span class="tag">${esc(f.kind)}</span> <span class="small muted">${fmtDate(f.date)}${f.from ? ' · ' + esc(f.from) : ''}${f.sent ? ' · sent' : ''}</span></div>
+        <div class="fb-text">${esc(f.text)}</div>
+        <button class="btn btn-sm" data-del-feedback="${esc(f.id)}">Remove</button>
+      </li>`).join('') : '<li class="muted small">No suggestions yet. Tap “💡 Suggest a change” at the bottom of any page.</li>';
   }
 
   // ---------- Settings ----------
@@ -763,6 +856,7 @@
     renderDashboard();
     renderRaceTable();
     renderSettings();
+    renderFeedbackList();
     if (raceMap) renderRaceMap(false);
     if (findMap) renderFind();
     const demo = state.races.some(r => r.demo);
@@ -788,6 +882,11 @@
       if (e.target.closest('[data-action="add-race"]')) { delete $('#raceForm').dataset.eventId; openRaceDialog(); return; }
       const edit = e.target.closest('[data-edit]');
       if (edit) { const r = state.races.find(x => x.id === edit.dataset.edit); if (r) { delete $('#raceForm').dataset.eventId; openRaceDialog(r); } return; }
+      const logBtn = e.target.closest('[data-log-results]');
+      if (logBtn) { openLogResults(logBtn.dataset.logResults); return; }
+      if (e.target.closest('[data-action="feedback"]')) { openFeedback(); return; }
+      const delFb = e.target.closest('[data-del-feedback]');
+      if (delFb) { state.feedback = state.feedback.filter(f => f.id !== delFb.dataset.delFeedback); save(); renderFeedbackList(); return; }
       const plan = e.target.closest('[data-plan]');
       if (plan) { planFromEvent(plan.dataset.plan); return; }
       const ev = e.target.closest('.event');
@@ -877,6 +976,31 @@
       state.profile.birthYear = num(f.birthYear.value);
       state.profile.goalRaces = num(f.goalRaces.value);
       save(); renderAll(); toast('Profile saved');
+    });
+
+    // Feedback
+    $$('#feedbackDialog [data-close]').forEach(b => b.addEventListener('click', () => $('#feedbackDialog').close()));
+    $('#feedbackForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!readFeedback()) return;
+      $('#feedbackDialog').close();
+      toast('Thanks! Saved to the suggestion list');
+    });
+    $('#fbShare').addEventListener('click', async () => {
+      const item = readFeedback();
+      if (!item) return;
+      const res = await shareFeedback(item);
+      if (res === 'shared' || res === 'copied') { item.sent = res; save(); renderFeedbackList(); }
+      $('#feedbackDialog').close();
+      toast(res === 'shared' ? 'Sent — thanks!' : res === 'copied' ? 'Copied — paste it into a text or email' : 'Saved to the suggestion list');
+    });
+    $('#fbGithub').addEventListener('click', () => {
+      const item = readFeedback();
+      if (!item) return;
+      item.sent = 'github'; save(); renderFeedbackList();
+      window.open(githubIssueUrl(item), '_blank', 'noopener');
+      $('#feedbackDialog').close();
+      toast('Opened GitHub — tap “Submit new issue” there');
     });
 
     // Backup

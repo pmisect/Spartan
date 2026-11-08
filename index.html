@@ -218,6 +218,14 @@
           <button class="btn btn-danger" id="resetData">Erase data on this device</button>
         </div>
       </div>
+      <div class="card">
+        <div class="card-head wrap">
+          <h3>Suggestions <span class="muted" id="feedbackCount"></span></h3>
+          <button class="btn btn-primary" data-action="feedback">💡 Suggest a change</button>
+        </div>
+        <p class="small muted">Ideas saved on this device. They're also included in backups.</p>
+        <ul class="fb-list" id="feedbackList"></ul>
+      </div>
     </section>
   </main>
 
@@ -294,6 +302,40 @@
     <option>Beater</option><option>Ape Hanger</option><option>Z-Wall</option><option>Tyrolean Traverse</option>
     <option>Bender</option><option>Dunk Wall</option><option>Cargo Net</option><option>Plate Drag</option>
   </datalist>
+
+  <!-- FEEDBACK DIALOG -->
+  <dialog id="feedbackDialog">
+    <form id="feedbackForm" class="form">
+      <div class="dialog-head">
+        <h3>💡 Suggest a change</h3>
+        <button type="button" class="btn btn-ghost" data-close aria-label="Close">✕</button>
+      </div>
+      <p class="small muted" style="margin:0">Something you wish this tracker did, something that's confusing, or something that's broken? Tell us.</p>
+      <div class="form-grid">
+        <label>What kind?
+          <select name="kind">
+            <option>Idea</option>
+            <option>Something's broken</option>
+            <option>Confusing</option>
+            <option>Other</option>
+          </select>
+        </label>
+        <label>Your name <input name="from" autocomplete="off" placeholder="optional"></label>
+        <label class="span-2">Your suggestion
+          <textarea name="text" rows="4" required placeholder="e.g. Let me add photos from each race"></textarea>
+        </label>
+      </div>
+      <span class="small muted" id="feedbackStatus"></span>
+      <div class="dialog-foot wrap">
+        <button type="button" class="btn" id="fbGithub" title="Opens a pre-filled GitHub issue on the project">Send to GitHub ↗</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="fbShare" title="Text or email it using your phone's share menu">Text / share it</button>
+        <button type="submit" class="btn btn-primary">Save idea</button>
+      </div>
+    </form>
+  </dialog>
+
+  <button class="fab" data-action="feedback" aria-label="Suggest a change">💡 <span>Suggest a change</span></button>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
