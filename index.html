@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spartan Race Tracker</title>
+  <meta name="description" content="Personal Spartan Race performance tracker: results, records, Trifecta progress, race map and race finder.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#151514">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23c8102e'/%3E%3Cpath d='M20 46V28c0-8 5-14 12-14s12 6 12 14v18h-6V30h-4v16h-4V30h-4v16z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="28" height="28"><rect width="64" height="64" rx="14" fill="currentColor"/><path d="M20 46V28c0-8 5-14 12-14s12 6 12 14v18h-6V30h-4v16h-4V30h-4v16z" fill="#fff"/></svg>
+      </span>
+      <div>
+        <div class="brand-title"><span id="athleteName">Athlete</span>'s Spartan Tracker</div>
+        <div class="brand-sub" id="athleteSub">Aroo! Log races, chase records, find the next one.</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost" id="unitToggle" title="Switch miles / kilometers">mi</button>
+      <button class="btn btn-ghost" id="themeToggle" title="Switch light / dark"></button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" class="tab active" data-tab="dashboard">Dashboard</button>
+    <button role="tab" class="tab" data-tab="races">My Races</button>
+    <button role="tab" class="tab" data-tab="map">Race Map</button>
+    <button role="tab" class="tab" data-tab="find">Find Races</button>
+    <button role="tab" class="tab" data-tab="settings">Profile &amp; Backup</button>
+  </nav>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section id="tab-dashboard" class="panel active" role="tabpanel">
+      <div id="emptyState" class="card empty hidden">
+        <h2>Ready for your first race?</h2>
+        <p>Add a race you've finished (or one you're signed up for) and this dashboard fills in with times, pace, placings, obstacle stats and Trifecta progress.</p>
+        <div class="row gap">
+          <button class="btn btn-primary" data-action="add-race">+ Add a race</button>
+          <button class="btn" data-goto="find">Find a race</button>
+          <button class="btn" id="loadDemo">Show sample data</button>
+        </div>
+      </div>
+
+      <div id="nextRace" class="card next-race hidden"></div>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head">
+            <h3>Trifecta tracker</h3>
+            <select id="trifectaYear" aria-label="Trifecta year"></select>
+          </div>
+          <p class="muted small">Finish a Sprint, Super and Beast in the same calendar year to earn a Spartan Trifecta.</p>
+          <div id="trifecta" class="trifecta"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Personal records</h3></div>
+          <div id="prs"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card chart-card">
+          <div class="card-head">
+            <h3>Pace over time</h3>
+            <select id="paceType" aria-label="Race type for pace chart"></select>
+          </div>
+          <p class="muted small" id="paceHint">Lower is faster.</p>
+          <div class="chart-wrap"><canvas id="paceChart" aria-label="Pace over time"></canvas></div>
+        </div>
+        <div class="card chart-card">
+          <div class="card-head"><h3>Finish ranking (percentile)</h3></div>
+          <p class="muted small">Share of finishers he beat in his heat. Higher is better.</p>
+          <div class="chart-wrap"><canvas id="pctChart" aria-label="Finish percentile over time"></canvas></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card chart-card">
+          <div class="card-head"><h3>Obstacles to train</h3></div>
+          <p class="muted small">Obstacles he failed most often, across all races.</p>
+          <div class="chart-wrap"><canvas id="obstacleChart" aria-label="Most-failed obstacles"></canvas></div>
+          <p class="muted small hidden" id="obstacleEmpty">No failed obstacles logged yet. Nice.</p>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Badges</h3></div>
+          <div id="badges" class="badges"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RACES -->
+    <section id="tab-races" class="panel" role="tabpanel">
+      <div class="card">
+        <div class="card-head wrap">
+          <h3>Race log</h3>
+          <div class="row gap">
+            <select id="raceFilter" aria-label="Filter races">
+              <option value="all">All races</option>
+              <option value="completed">Completed</option>
+              <option value="planned">Planned</option>
+            </select>
+            <button class="btn btn-primary" data-action="add-race">+ Add race</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="raceTable">
+            <thead>
+              <tr>
+                <th>Date</th><th>Race</th><th>Type</th><th class="num">Distance</th><th class="num">Time</th>
+                <th class="num">Pace</th><th class="num">Overall</th><th class="num">Age group</th><th class="num">Obstacles</th><th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="muted small hidden" id="raceTableEmpty">No races yet. Tap “+ Add race” to log one.</p>
+      </div>
+    </section>
+
+    <!-- MAP -->
+    <section id="tab-map" class="panel" role="tabpanel">
+      <div class="card">
+        <div class="card-head wrap">
+          <h3>Where he's raced</h3>
+          <div class="legend" id="mapLegend">
+            <label><input type="checkbox" data-layer="completed" checked> <span class="pin pin-completed">★</span> Completed</label>
+            <label><input type="checkbox" data-layer="planned" checked> <span class="pin pin-planned">⚑</span> Planned</label>
+            <label><input type="checkbox" data-layer="schedule"> <span class="pin pin-schedule"></span> Upcoming Spartan events</label>
+            <label><span class="pin pin-home">⌂</span> Home</label>
+          </div>
+        </div>
+        <div id="raceMap" class="map"></div>
+        <p class="muted small" id="mapStats"></p>
+      </div>
+    </section>
+
+    <!-- FIND -->
+    <section id="tab-find" class="panel" role="tabpanel">
+      <div class="card">
+        <div class="card-head wrap">
+          <h3>Find upcoming Spartan races</h3>
+          <a class="btn" id="officialFinder" href="https://www.spartan.com/en/race/find-race" target="_blank" rel="noopener">Official race finder ↗</a>
+        </div>
+        <div class="filters">
+          <label>Within
+            <select id="findRadius">
+              <option value="150">150 mi</option>
+              <option value="300" selected>300 mi</option>
+              <option value="600">600 mi</option>
+              <option value="1200">1,200 mi</option>
+              <option value="100000">Anywhere</option>
+            </select>
+          </label>
+          <label>Race type
+            <select id="findType">
+              <option value="any">Any</option>
+              <option>Kids</option><option>Sprint</option><option>Super</option><option>Beast</option>
+              <option>Ultra</option><option>Stadion</option><option>Trail</option>
+            </select>
+          </label>
+          <label>Sort
+            <select id="findSort">
+              <option value="date">Soonest first</option>
+              <option value="distance">Closest first</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="findTrifecta"> Trifecta weekends only (Sprint + Super + Beast)</label>
+        </div>
+        <p class="muted small" id="findHomeNote"></p>
+        <div class="grid-find">
+          <div id="findList" class="find-list"></div>
+          <div id="findMap" class="map map-small"></div>
+        </div>
+        <p class="muted small" id="findSource"></p>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" class="panel" role="tabpanel">
+      <div class="grid-2">
+        <div class="card">
+          <h3>Athlete profile</h3>
+          <form id="profileForm" class="form">
+            <label>First name <input name="name" autocomplete="off" placeholder="e.g. Jake"></label>
+            <label>Birth year <input name="birthYear" type="number" min="1950" max="2025" placeholder="e.g. 2012"></label>
+            <label>Home town or ZIP
+              <div class="row gap">
+                <input name="homeQuery" placeholder="e.g. Mystic, CT">
+                <button type="button" class="btn" id="locateHome">Look up</button>
+              </div>
+            </label>
+            <p class="muted small" id="homeStatus"></p>
+            <label>Season goal (races this year) <input name="goalRaces" type="number" min="1" max="50" placeholder="e.g. 4"></label>
+            <button class="btn btn-primary" type="submit">Save profile</button>
+          </form>
+        </div>
+        <div class="card">
+          <h3>Backup &amp; move between devices</h3>
+          <p class="small">Race data is saved <strong>only in this browser</strong> on this device. Nothing is uploaded or shared. To use it on another phone or computer, download a backup here and restore it there.</p>
+          <div class="row gap wrap">
+            <button class="btn btn-primary" id="exportData">Download backup</button>
+            <label class="btn">Restore backup<input type="file" id="importData" accept="application/json,.json" hidden></label>
+          </div>
+          <p class="muted small" id="backupStatus"></p>
+          <hr>
+          <h4>Start over</h4>
+          <p class="small muted">Removes all races and profile info from this browser. Download a backup first.</p>
+          <button class="btn btn-danger" id="resetData">Erase data on this device</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- RACE DIALOG -->
+  <dialog id="raceDialog">
+    <form id="raceForm" method="dialog" class="form">
+      <div class="dialog-head">
+        <h3 id="raceDialogTitle">Add race</h3>
+        <button type="button" class="btn btn-ghost" data-close aria-label="Close">✕</button>
+      </div>
+      <input type="hidden" name="id">
+      <div class="seg" role="radiogroup" aria-label="Race status">
+        <label><input type="radio" name="status" value="completed" checked> Finished it</label>
+        <label><input type="radio" name="status" value="planned"> Signed up / planning</label>
+      </div>
+      <div class="form-grid">
+        <label class="span-2">Race name <input name="name" required placeholder="e.g. New England Spartan Sprint"></label>
+        <label>Date <input name="date" type="date" required></label>
+        <label>Race type
+          <select name="type" required>
+            <option>Kids</option><option selected>Sprint</option><option>Super</option><option>Beast</option>
+            <option>Ultra</option><option>Stadion</option><option>Trail</option><option>Other</option>
+          </select>
+        </label>
+        <label>Heat
+          <select name="heat">
+            <option>Open</option><option>Age Group</option><option>Elite</option><option>Kids</option>
+          </select>
+        </label>
+        <label>Distance <span class="unit-label" data-unit="dist"></span><input name="distance" type="number" step="0.01" min="0" placeholder="3.1"></label>
+        <label class="span-2">Location
+          <div class="row gap">
+            <input name="location" placeholder="e.g. Barre, MA">
+            <button type="button" class="btn" id="geocodeRace">Find on map</button>
+          </div>
+          <span class="muted small" id="geocodeStatus"></span>
+        </label>
+        <input type="hidden" name="lat"><input type="hidden" name="lon">
+      </div>
+
+      <fieldset class="results" id="resultsFields">
+        <legend>Results</legend>
+        <div class="form-grid">
+          <label>Finish time (h:mm:ss) <input name="time" placeholder="1:12:45" pattern="^\d{1,2}(:\d{1,2}){1,2}$"></label>
+          <label>Elevation gain <span class="unit-label" data-unit="elev"></span><input name="elevation" type="number" min="0"></label>
+          <label>Overall place <input name="overallPlace" type="number" min="1"></label>
+          <label>Overall finishers <input name="overallTotal" type="number" min="1"></label>
+          <label>Age group place <input name="agPlace" type="number" min="1"></label>
+          <label>Age group finishers <input name="agTotal" type="number" min="1"></label>
+          <label>Total obstacles <input name="obstacles" type="number" min="0"></label>
+          <label>Obstacles failed <input name="obstaclesFailed" type="number" min="0"></label>
+          <label>Penalty burpees done <input name="burpees" type="number" min="0"></label>
+          <label>Effort (1–10) <input name="effort" type="number" min="1" max="10"></label>
+          <label class="span-2">Which obstacles did he fail? <span class="muted small">(comma separated)</span>
+            <input name="failedList" list="obstacleNames" placeholder="e.g. Rope Climb, Spear Throw">
+          </label>
+        </div>
+      </fieldset>
+      <label>Notes <textarea name="notes" rows="2" placeholder="Weather, mud level, what went well, what to work on…"></textarea></label>
+      <div class="dialog-foot">
+        <button type="button" class="btn btn-danger hidden" id="deleteRace">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary" value="save">Save race</button>
+      </div>
+    </form>
+  </dialog>
+
+  <datalist id="obstacleNames">
+    <option>Rope Climb</option><option>Spear Throw</option><option>Multi-Rig</option><option>Monkey Bars</option>
+    <option>Twister</option><option>Olympus</option><option>Hercules Hoist</option><option>Bucket Carry</option>
+    <option>Atlas Carry</option><option>Sandbag Carry</option><option>Inverted Wall</option><option>8ft Wall</option>
+    <option>7ft Wall</option><option>Stairway to Sparta</option><option>Slip Wall</option><option>Barbed Wire Crawl</option>
+    <option>Beater</option><option>Ape Hanger</option><option>Z-Wall</option><option>Tyrolean Traverse</option>
+    <option>Bender</option><option>Dunk Wall</option><option>Cargo Net</option><option>Plate Drag</option>
+  </datalist>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <footer class="foot muted small">
+    Personal project. Not affiliated with Spartan Race, Inc. · Data stays in your browser.
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
