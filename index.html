@@ -33,7 +33,7 @@
     <button role="tab" class="tab" data-tab="races">My Races</button>
     <button role="tab" class="tab" data-tab="map">Race Map</button>
     <button role="tab" class="tab" data-tab="find">Find Races</button>
-    <button role="tab" class="tab" data-tab="settings">Profile &amp; Backup</button>
+    <button role="tab" class="tab" data-tab="settings">Profile &amp; Sync <span class="sync-dot hidden" id="syncDot"></span></button>
   </nav>
 
   <main>
@@ -192,6 +192,10 @@
 
     <!-- SETTINGS -->
     <section id="tab-settings" class="panel" role="tabpanel">
+      <div class="card" id="syncCard">
+        <div class="card-head"><h3>Family sync</h3><span class="sync-pill" id="syncPill"></span></div>
+        <div id="syncBody"></div>
+      </div>
       <div class="grid-2">
         <div class="card">
           <h3>Athlete profile</h3>
@@ -380,7 +384,9 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="js/config.js"></script>
   <script src="js/photos.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

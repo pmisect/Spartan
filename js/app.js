@@ -28,6 +28,8 @@
     settings: { unit: 'mi', theme: null },
     races: [],
     feedback: [],
+    profileUpdatedAt: 0,
+    tomb: { races: {}, feedback: {}, photos: {} },   // deletions, so sync can pass them on
   });
 
   let state = load();
@@ -54,11 +56,63 @@
       settings: Object.assign(base.settings, s.settings || {}),
       races: Array.isArray(s.races) ? s.races.filter(r => r && r.id && r.name && r.date) : [],
       feedback: Array.isArray(s.feedback) ? s.feedback.filter(f => f && f.id && f.text) : [],
+      profileUpdatedAt: +s.profileUpdatedAt || 0,
+      tomb: {
+        races: Object.assign({}, s.tomb && s.tomb.races),
+        feedback: Object.assign({}, s.tomb && s.tomb.feedback),
+        photos: Object.assign({}, s.tomb && s.tomb.photos),
+      },
     };
   }
-  function save() {
+  function persist() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
     catch (e) { toast('Could not save — browser storage is blocked or full.'); }
+  }
+  // Stable JSON (sorted keys) so edits can be detected regardless of key order.
+  function canon(x) {
+    if (Array.isArray(x)) return '[' + x.map(canon).join(',') + ']';
+    if (x && typeof x === 'object') return '{' + Object.keys(x).filter(k => x[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + canon(x[k])).join(',') + '}';
+    return JSON.stringify(x === undefined ? null : x);
+  }
+  let snap = null;
+  function takeSnapshot() {
+    const races = new Map();
+    for (const r of state.races) { const { updatedAt, ...rest } = r; races.set(r.id, canon(rest)); }
+    snap = { races, feedback: new Set(state.feedback.map(f => f.id)), profile: canon(state.profile) };
+  }
+  // Mark what changed since the last save with a timestamp (newest edit wins when phones sync).
+  function stampChanges() {
+    if (!snap) return false;
+    const now = Date.now();
+    let changed = false;
+    const seen = new Set();
+    for (const r of state.races) {
+      seen.add(r.id);
+      const { updatedAt, ...rest } = r;
+      if (snap.races.get(r.id) !== canon(rest)) { r.updatedAt = now; changed = true; }
+    }
+    for (const id of snap.races.keys()) if (!seen.has(id)) { state.tomb.races[id] = now; changed = true; }
+    const fbIds = new Set(state.feedback.map(f => f.id));
+    for (const id of snap.feedback) if (!fbIds.has(id)) { state.tomb.feedback[id] = now; changed = true; }
+    if (state.feedback.some(f => !snap.feedback.has(f.id))) changed = true;
+    if (canon(state.profile) !== snap.profile) { state.profileUpdatedAt = now; changed = true; }
+    return changed;
+  }
+  function save() {
+    const changed = stampChanges();
+    persist();
+    takeSnapshot();
+    if (window.TrackerSync && (changed || pendingSync)) { pendingSync = false; TrackerSync.changed(); }
+  }
+  let pendingSync = false;
+  // Forget photos everywhere (this phone now, other phones on next sync).
+  function forgetPhotos(ids) {
+    if (!ids || !ids.length) return Promise.resolve();
+    const now = Date.now();
+    ids.forEach(id => { state.tomb.photos[id] = now; });
+    pendingSync = true;
+    save();
+    return hasPhotos() ? PhotoStore.remove(ids).catch(() => {}) : Promise.resolve();
   }
 
   // ---------- Helpers ----------
@@ -605,8 +659,8 @@
     const { saved, added, removed } = photoSession;
     photoSession.raceId = null;
     try {
-      if (saved) await PhotoStore.remove(removed);
-      else await PhotoStore.remove(added);
+      await forgetPhotos(saved ? removed : added);
+      if (saved && added.length && window.TrackerSync) TrackerSync.changed();
     } catch (e) { /* ignore */ }
     await refreshPhotoIndex();
     renderGallery(); renderRaceTable();
@@ -981,6 +1035,161 @@
       </li>`).join('') : '<li class="muted small">No suggestions yet. Tap “💡 Suggest a change” at the bottom of any page.</li>';
   }
 
+  // ---------- Family sync ----------
+  async function afterPhotosChanged() {
+    await refreshPhotoIndex();
+    renderGallery(); renderRaceTable();
+  }
+  function syncDoc() {
+    return {
+      v: 1,
+      races: state.races.filter(r => !r.demo).map(r => Object.assign({}, r)).sort((a, b) => String(a.id).localeCompare(String(b.id))),
+      feedback: state.feedback.map(f => Object.assign({}, f)).sort((a, b) => String(a.id).localeCompare(String(b.id))),
+      profile: Object.assign({}, state.profile),
+      profileUpdatedAt: state.profileUpdatedAt || 0,
+      tomb: state.tomb,
+    };
+  }
+  function applySyncDoc(doc) {
+    const demo = state.races.filter(r => r.demo);
+    state.races = (doc.races || []).map(r => Object.assign({}, r)).concat(demo);
+    state.feedback = (doc.feedback || []).map(f => Object.assign({}, f));
+    state.profile = Object.assign(defaultState().profile, doc.profile || {});
+    state.profileUpdatedAt = doc.profileUpdatedAt || 0;
+    state.tomb = Object.assign({ races: {}, feedback: {}, photos: {} }, doc.tomb || {});
+    persist();
+    takeSnapshot();   // remote changes are not local edits
+    const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#profileForm');
+    renderHeader(); renderDashboard(); renderRaceTable(); renderFeedbackList();
+    if (!typing) renderSettings();
+    if (raceMap) renderRaceMap(false);
+    if (findMap) renderFind();
+  }
+
+  function timeAgo(ms) {
+    if (!ms) return 'never';
+    const s = Math.round((Date.now() - ms) / 1000);
+    if (s < 45) return 'just now';
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    if (s < 86400) return `${Math.round(s / 3600)} hr ago`;
+    return new Date(ms).toLocaleDateString();
+  }
+
+  function renderSync(st) {
+    const card = $('#syncCard');
+    if (!card) return;
+    st = st || (window.TrackerSync ? TrackerSync.status() : { configured: false });
+    const pill = $('#syncPill');
+    const body = $('#syncBody');
+    const name = state.profile.name || DEFAULT_ATHLETE;
+    if (!st.configured) {
+      pill.textContent = '';
+      body.innerHTML = `<p class="small muted">Family sync isn't switched on for this site yet.</p>`;
+      $('#syncDot').className = 'sync-dot hidden';
+      return;
+    }
+    const states = {
+      off: ['Off', ''], idle: ['On', 'ok'], ok: ['On', 'ok'], syncing: ['Syncing…', 'busy'],
+      offline: ['Offline', 'warn'], error: ['Problem', 'bad'],
+    };
+    const [label, cls] = states[st.state] || ['', ''];
+    pill.textContent = label;
+    pill.className = `sync-pill ${cls}`;
+    $('#syncDot').className = `sync-dot ${st.connected ? cls : 'hidden'}`;
+    $('#syncDot').title = st.connected ? `Family sync: ${label}` : '';
+    if (!st.connected) {
+      body.innerHTML = `
+        <p class="small">See ${esc(name)}'s races and photos on every family phone. Changes show up on the others within about a minute.</p>
+        <div class="sync-steps">
+          <div>
+            <strong>On the phone that has his races</strong>
+            <p class="small muted">Do this once. You'll get an invite link to send to the other phones.</p>
+            <button class="btn btn-primary" id="syncStart">Start family sync</button>
+          </div>
+          <div>
+            <strong>On the other phones</strong>
+            <p class="small muted">Tap the invite link, or paste it here.</p>
+            <div class="row gap"><input id="syncJoinInput" placeholder="Paste invite link or code" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn" id="syncJoin">Join</button></div>
+          </div>
+        </div>
+        <p class="small muted" id="syncMsg">${st.state === 'error' ? esc(st.message) : ''}</p>`;
+      return;
+    }
+    const line = st.state === 'syncing' ? (st.message || 'Syncing…')
+      : st.state === 'error' ? `⚠️ ${esc(st.message)}`
+      : st.state === 'offline' ? esc(st.message || 'Offline — will sync when back online')
+      : `✓ Synced ${timeAgo(st.lastSync)}`;
+    body.innerHTML = `
+      <p class="small"><strong>${line}</strong></p>
+      <p class="small muted">This phone shares ${esc(name)}'s races, photos and suggestions with the family. Anyone with the invite link can see and edit them, so only send it to family.</p>
+      <div class="row gap wrap">
+        <button class="btn" id="syncNow">Sync now</button>
+        <button class="btn btn-primary" id="syncInvite">Invite a phone</button>
+        <button class="btn btn-ghost" id="syncLeave">Disconnect this phone</button>
+      </div>
+      <div class="invite hidden" id="inviteBox">
+        <p class="small">Send this link to the other phone and open it there:</p>
+        <input id="inviteLink" readonly value="${esc(TrackerSync.inviteLink())}">
+        <div class="row gap wrap"><button class="btn btn-sm" id="inviteCopy">Copy link</button><button class="btn btn-sm" id="inviteShare">Text / share</button></div>
+      </div>`;
+  }
+
+  async function handleJoinLink() {
+    const m = location.hash.match(/join=([a-z0-9]{20,64})/i);
+    if (!m || !window.TrackerSync) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!TrackerSync.isConfigured()) { toast('Family sync isn’t switched on for this site yet'); return; }
+    const code = m[1].toLowerCase();
+    const st = TrackerSync.status();
+    if (st.connected && TrackerSync.inviteLink().endsWith(code)) { toast('This phone is already in family sync'); return; }
+    if (!confirm(`Join ${state.profile.name || DEFAULT_ATHLETE}'s family sync on this phone?\n\nAny races already on this phone will be combined with the family's.`)) return;
+    showTab('settings');
+    try { await TrackerSync.join(code); await afterPhotosChanged(); toast('Joined — races and photos are syncing'); }
+    catch (e) { toast(e.message); }
+  }
+
+  function bindSync() {
+    if (!window.TrackerSync) return;
+    TrackerSync.init({
+      getDoc: syncDoc,
+      applyDoc: applySyncDoc,
+      pendingPhotoIds: () => (photoSession.raceId ? photoSession.added.slice() : []),
+      onPhotosChanged: afterPhotosChanged,
+      onStatus: renderSync,
+    });
+    setInterval(() => { const st = TrackerSync.status(); if (st.connected && st.state === 'ok') renderSync(st); }, 30000);
+    $('#syncCard').addEventListener('click', async (e) => {
+      const id = e.target.id;
+      if (id === 'syncStart') {
+        e.target.disabled = true;
+        try { await TrackerSync.start(); await afterPhotosChanged(); renderSync(); $('#inviteBox') && $('#inviteBox').classList.remove('hidden'); toast('Family sync is on'); }
+        catch (err) { $('#syncMsg') && ($('#syncMsg').textContent = err.message); e.target.disabled = false; }
+      }
+      if (id === 'syncJoin') {
+        const val = $('#syncJoinInput').value;
+        e.target.disabled = true;
+        try { await TrackerSync.join(val); await afterPhotosChanged(); toast('Joined — races and photos are syncing'); }
+        catch (err) { renderSync(); $('#syncMsg').textContent = err.message; }
+      }
+      if (id === 'syncNow') { await TrackerSync.syncNow(); }
+      if (id === 'syncInvite') { $('#inviteBox').classList.toggle('hidden'); }
+      if (id === 'inviteCopy') {
+        try { await navigator.clipboard.writeText(TrackerSync.inviteLink()); toast('Invite link copied'); }
+        catch (err) { $('#inviteLink').select(); toast('Select the link and copy it'); }
+      }
+      if (id === 'inviteShare') {
+        const link = TrackerSync.inviteLink();
+        const text = `Join ${state.profile.name || DEFAULT_ATHLETE}'s Spartan Tracker: ${link}`;
+        if (navigator.share) { try { await navigator.share({ title: 'Spartan Tracker invite', text, url: link }); } catch (err) { /* cancelled */ } }
+        else { try { await navigator.clipboard.writeText(link); toast('Invite link copied'); } catch (err) { /* ignore */ } }
+      }
+      if (id === 'syncLeave') {
+        if (!confirm('Disconnect this phone from family sync? Races stay on this phone, but changes will stop syncing.')) return;
+        TrackerSync.disconnect(); toast('This phone is no longer syncing');
+      }
+    });
+  }
+
   // ---------- Settings ----------
   function renderSettings() {
     const f = $('#profileForm');
@@ -1097,7 +1306,7 @@
       if (!r || !confirm(`Delete “${r.name}”?`)) return;
       state.races = state.races.filter(x => x.id !== id);
       photoSession.saved = true;
-      if (hasPhotos()) PhotoStore.removeForRace(id).catch(() => {});
+      forgetPhotos(racePhotos(id).map(p => p.id)).then(afterPhotosChanged);
       save(); dlg().close(); renderAll(); toast('Race deleted');
     });
     $('#geocodeRace').addEventListener('click', async () => {
@@ -1126,7 +1335,7 @@
         e.stopPropagation();
         const id = rm.dataset.rmPhoto;
         photoSession.list = photoSession.list.filter(p => p.id !== id);
-        if (photoSession.added.includes(id)) { photoSession.added = photoSession.added.filter(x => x !== id); PhotoStore.remove([id]).catch(() => {}); }
+        if (photoSession.added.includes(id)) { photoSession.added = photoSession.added.filter(x => x !== id); forgetPhotos([id]); }
         else photoSession.removed.push(id);
         renderDialogPhotos();
         return;
@@ -1241,7 +1450,17 @@
         const next = normalizeState(parsed);
         const photos = Array.isArray(parsed.photos) ? parsed.photos : null;
         if (!confirm(`Replace the data on this device with this backup (${next.races.length} races${photos ? `, ${photos.length} photos` : ''})?`)) return;
-        state = next; save(); applyTheme();
+        if (window.TrackerSync && TrackerSync.isConnected()) {
+          // Keep family races that aren't in the backup; backup copies win for the same race.
+          const ids = new Set(next.races.map(r => r.id));
+          state.races = state.races.filter(r => !ids.has(r.id)).concat(next.races);
+          state.profile = next.profile; state.feedback = next.feedback;
+          next.races.forEach(r => { delete state.tomb.races[r.id]; });
+          save();
+        } else {
+          state = next; save();
+        }
+        applyTheme();
         let nPhotos = 0;
         if (photos && hasPhotos()) { $('#backupStatus').textContent = 'Restoring photos…'; nPhotos = await PhotoStore.importAll(photos); }
         await refreshPhotoIndex();
@@ -1251,8 +1470,12 @@
       } catch (err) { $('#backupStatus').textContent = 'That file is not a valid tracker backup.'; }
     });
     $('#resetData').addEventListener('click', () => {
-      if (!confirm('Erase all races, photos and profile info on this device? This cannot be undone.')) return;
-      state = defaultState(); save(); applyTheme();
+      const syncing = window.TrackerSync && TrackerSync.isConnected();
+      if (!confirm(syncing
+        ? 'Erase everything on THIS phone and disconnect it from family sync? The family copy is not affected.'
+        : 'Erase all races, photos and profile info on this device? This cannot be undone.')) return;
+      if (syncing) TrackerSync.disconnect();
+      state = defaultState(); persist(); takeSnapshot(); applyTheme();
       if (hasPhotos()) { PhotoStore.clear().catch(() => {}); photoIndex = new Map(); }
       renderAll(); toast('Data erased');
     });
@@ -1260,6 +1483,7 @@
 
   // ---------- Init ----------
   async function init() {
+    takeSnapshot();
     applyTheme();
     renderThemeIcon();
     bind();
@@ -1281,6 +1505,9 @@
     try { tab = localStorage.getItem(STORE_KEY + '.tab') || 'dashboard'; } catch (e) { /* ignore */ }
     if (!$(`#tab-${tab}`)) tab = 'dashboard';
     showTab(tab);
+    bindSync();
+    renderSync();
+    handleJoinLink();
   }
 
   init();

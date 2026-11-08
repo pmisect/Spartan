@@ -358,3 +358,20 @@ dialog.viewer::backdrop { background: #000; }
 .viewer-nav.prev { left: 8px; }
 .viewer-nav.next { right: 8px; }
 .viewer-nav:disabled { opacity: 0; pointer-events: none; }
+
+/* Family sync */
+.sync-pill { font-size: .75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); }
+.sync-pill:empty { display: none; }
+.sync-pill.ok { color: var(--good); }
+.sync-pill.bad { color: #d03b3b; }
+.sync-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 10px 0; }
+.sync-steps > div { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 6px; align-content: start; }
+.sync-steps p { margin: 0; }
+@media (max-width: 640px) { .sync-steps { grid-template-columns: 1fr; } }
+.invite { margin-top: 12px; display: grid; gap: 8px; }
+.invite p { margin: 0; }
+.sync-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 4px; vertical-align: middle; background: #9a988f; }
+.sync-dot.ok { background: #0ca30c; }
+.sync-dot.busy { background: #3987e5; }
+.sync-dot.warn { background: #fab219; }
+.sync-dot.bad { background: #d03b3b; }

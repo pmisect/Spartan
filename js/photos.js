@@ -146,6 +146,15 @@
     return recs.length;
   }
 
+  /** Full stored record (including the image blob), or null. */
+  async function getRecord(id) {
+    return (await tx('readonly', os => reqP(os.get(id)))) || null;
+  }
+  /** Store a complete record as-is (used by sync). */
+  async function putRecord(rec) {
+    await tx('readwrite', os => os.put(rec));
+  }
+
   let persistAsked = false;
   function requestPersist() {
     if (persistAsked) return;
@@ -153,5 +162,5 @@
     try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { /* ignore */ }
   }
 
-  window.PhotoStore = { add, listForRace, listAll, getBlob, remove, removeForRace, clear, exportAll, importAll };
+  window.PhotoStore = { add, listForRace, listAll, getBlob, getRecord, putRecord, remove, removeForRace, clear, exportAll, importAll, blobToDataUrl, dataUrlToBlob };
 })();
