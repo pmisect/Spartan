@@ -184,6 +184,7 @@
     renderPRs(done);
     renderBadges(done);
     // Charts measure their container, so only draw them while the dashboard is visible.
+    renderGallery();
     if ($('#tab-dashboard').classList.contains('active')) renderCharts(done);
   }
 
@@ -512,7 +513,7 @@
       const obs = r.obstacles ? `${r.obstacles - (r.obstaclesFailed || 0)}/${r.obstacles}` : '—';
       return `<tr class="${isPlanned ? 'planned' : ''}">
         <td>${fmtDate(r.date)}</td>
-        <td><strong>${esc(r.name)}</strong>${r.location ? `<div class="small muted">${esc(r.location)}</div>` : ''}</td>
+        <td><strong>${esc(r.name)}</strong>${racePhotos(r.id).length ? ` <button class="photo-link tag" data-race-photos="${esc(r.id)}" aria-label="View photos">📷 ${racePhotos(r.id).length}</button>` : ''}${r.location ? `<div class="small muted">${esc(r.location)}</div>` : ''}</td>
         <td><span class="tag">${esc(r.type)}</span> ${isPlanned ? '<span class="tag planned">Planned</span>' : ''} ${prIds.has(r.id) ? '<span class="tag pr">PR</span>' : ''}</td>
         <td class="num">${fmtDist(r.distanceKm)}</td>
         <td class="num">${fmtTime(r.timeSec)}</td>
@@ -523,6 +524,136 @@
         <td><button class="btn btn-sm" data-edit="${esc(r.id)}">Edit</button></td>
       </tr>`;
     }).join('');
+  }
+
+  // ---------- Photos ----------
+  const hasPhotos = () => typeof window.PhotoStore !== 'undefined';
+  let photoIndex = new Map();               // raceId -> [photo meta]
+  const photoSession = { raceId: null, list: [], added: [], removed: [], saved: false, busy: 0 };
+  const viewer = { list: [], i: 0, url: null };
+
+  async function refreshPhotoIndex() {
+    if (!hasPhotos()) return;
+    try {
+      const all = await PhotoStore.listAll();
+      const m = new Map();
+      for (const ph of all) (m.get(ph.raceId) || m.set(ph.raceId, []).get(ph.raceId)).push(ph);
+      for (const list of m.values()) list.sort((a, b) => a.addedAt.localeCompare(b.addedAt));
+      photoIndex = m;
+    } catch (e) { photoIndex = new Map(); }
+  }
+  const racePhotos = (id) => photoIndex.get(id) || [];
+
+  function photoTile(ph, opts = {}) {
+    const race = state.races.find(r => r.id === ph.raceId);
+    return `<div class="photo-tile ${opts.pending ? 'pending' : ''}" role="button" tabindex="0" data-photo="${esc(ph.id)}" data-ctx="${esc(opts.ctx || '')}" aria-label="Open photo${race ? ' from ' + esc(race.name) : ''}">
+      <img src="${ph.thumb}" alt="" loading="lazy">
+      ${opts.caption && race ? `<span class="cap">${esc(race.name)}</span>` : ''}
+      ${opts.removable ? `<button type="button" class="rm" data-rm-photo="${esc(ph.id)}" aria-label="Remove photo">✕</button>` : ''}
+    </div>`;
+  }
+
+  function renderGallery() {
+    const raceIds = new Set(state.races.map(r => r.id));
+    const all = [];
+    for (const [rid, list] of photoIndex) if (raceIds.has(rid)) all.push(...list);
+    const dateOf = (ph) => (state.races.find(r => r.id === ph.raceId) || {}).date || '';
+    all.sort((a, b) => dateOf(b).localeCompare(dateOf(a)) || b.addedAt.localeCompare(a.addedAt));
+    $('#galleryCard').classList.toggle('hidden', all.length === 0);
+    $('#galleryCount').textContent = all.length ? `(${all.length})` : '';
+    $('#gallery').innerHTML = all.slice(0, 24).map(ph => photoTile(ph, { caption: true, ctx: 'gallery' })).join('');
+    viewer.gallery = all;
+  }
+
+  function renderDialogPhotos() {
+    const n = photoSession.busy;
+    $('#dialogPhotos').innerHTML = photoSession.list.map(ph => photoTile(ph, { removable: true, ctx: 'dialog' })).join('');
+    $('#photoStatus').textContent = n ? `Adding ${n} photo${n === 1 ? '' : 's'}…`
+      : photoSession.list.length ? `${photoSession.list.length} photo${photoSession.list.length === 1 ? '' : 's'}` : 'Finish-line shots, medals, mud…';
+  }
+
+  async function startPhotoSession(raceId) {
+    Object.assign(photoSession, { raceId, list: [], added: [], removed: [], saved: false, busy: 0 });
+    $('#addPhotosBtn').classList.toggle('hidden', !hasPhotos());
+    renderDialogPhotos();
+    if (!hasPhotos()) { $('#photoStatus').textContent = 'Photos are not supported in this browser.'; return; }
+    try { photoSession.list = await PhotoStore.listForRace(raceId); } catch (e) { photoSession.list = []; }
+    if (photoSession.raceId === raceId) renderDialogPhotos();
+  }
+
+  async function addPhotosFromInput(files) {
+    const raceId = photoSession.raceId;
+    const list = Array.from(files || []).filter(f => !f.type || f.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp|gif)$/i.test(f.name));
+    if (!list.length) return;
+    photoSession.busy += list.length;
+    renderDialogPhotos();
+    let failed = 0;
+    for (const file of list) {
+      try {
+        const meta = await PhotoStore.add(raceId, file);
+        if (photoSession.raceId === raceId) { photoSession.list.push(meta); photoSession.added.push(meta.id); }
+        else await PhotoStore.remove([meta.id]);   // dialog was closed meanwhile
+      } catch (e) { failed++; }
+      photoSession.busy--;
+      if (photoSession.raceId === raceId) renderDialogPhotos();
+    }
+    if (failed) toast(`${failed} photo${failed === 1 ? '' : 's'} couldn't be added — try a JPEG or PNG`);
+  }
+
+  async function endPhotoSession() {
+    if (!hasPhotos() || !photoSession.raceId) return;
+    const { saved, added, removed } = photoSession;
+    photoSession.raceId = null;
+    try {
+      if (saved) await PhotoStore.remove(removed);
+      else await PhotoStore.remove(added);
+    } catch (e) { /* ignore */ }
+    await refreshPhotoIndex();
+    renderGallery(); renderRaceTable();
+  }
+
+  async function openViewer(list, index) {
+    if (!list.length) return;
+    viewer.list = list; viewer.i = Math.max(0, Math.min(index, list.length - 1));
+    const dlgEl = $('#photoViewer');
+    if (!dlgEl.open) dlgEl.showModal();
+    await showViewerPhoto();
+  }
+  async function showViewerPhoto() {
+    const ph = viewer.list[viewer.i];
+    const race = state.races.find(r => r.id === ph.raceId);
+    $('#viewerTitle').textContent = race ? race.name : 'Race photo';
+    $('#viewerSub').textContent = race ? `${fmtDate(race.date)}${race.location ? ' · ' + race.location : ''}` : '';
+    $('#viewerCount').textContent = viewer.list.length > 1 ? `${viewer.i + 1} of ${viewer.list.length}` : '';
+    $('[data-viewer="prev"]').disabled = viewer.i === 0;
+    $('[data-viewer="next"]').disabled = viewer.i >= viewer.list.length - 1;
+    const img = $('#viewerImg');
+    img.src = ph.thumb;          // instant preview, then swap in the full photo
+    img.alt = race ? `Photo from ${race.name}` : 'Race photo';
+    try {
+      const blob = await PhotoStore.getBlob(ph.id);
+      if (blob && viewer.list[viewer.i] === ph) {
+        if (viewer.url) URL.revokeObjectURL(viewer.url);
+        viewer.url = URL.createObjectURL(blob);
+        img.src = viewer.url;
+      }
+    } catch (e) { /* keep thumbnail */ }
+  }
+  async function saveViewerPhoto() {
+    const ph = viewer.list[viewer.i];
+    const race = state.races.find(r => r.id === ph.raceId);
+    const blob = await PhotoStore.getBlob(ph.id);
+    if (!blob) return;
+    const base = (race ? race.name : 'spartan-race').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'spartan-race';
+    const file = new File([blob], `${base}-${viewer.i + 1}.jpg`, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: race ? race.name : 'Race photo' }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file); a.download = file.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   // ---------- Race dialog ----------
@@ -536,7 +667,7 @@
     const r = prefill || race || {};
     $('#raceDialogTitle').textContent = race ? 'Edit race' : 'Add race';
     $('#deleteRace').classList.toggle('hidden', !race);
-    f.id.value = race?.id || '';
+    f.id.value = race?.id || uid();
     // New races start with neither option picked so it's a deliberate choice.
     $$('#raceForm input[name="status"]').forEach(i => { i.checked = (i.value === r.status); });
     f.name.value = r.name || '';
@@ -562,6 +693,7 @@
     if (r.lat != null) $('#geocodeStatus').textContent = '📍 Location pinned on map';
     applyDateGuard();
     dlg().showModal();
+    startPhotoSession(f.id.value);
   }
   function openLogResults(id) {
     const r = state.races.find(x => x.id === id);
@@ -933,6 +1065,8 @@
 
     $('#loadDemo').addEventListener('click', () => {
       if (state.races.some(r => r.demo)) {
+        const demoIds = state.races.filter(r => r.demo).map(r => r.id);
+        if (hasPhotos()) demoIds.forEach(id => PhotoStore.removeForRace(id).catch(() => {}));
         state.races = state.races.filter(r => !r.demo); toast('Sample data cleared');
       } else {
         state.races.push(...demoRaces()); toast('Sample races added — clear them any time');
@@ -953,6 +1087,7 @@
       const idx = state.races.findIndex(x => x.id === r.id);
       if (idx >= 0) state.races[idx] = r; else state.races.push(r);
       delete f.dataset.eventId;
+      photoSession.saved = true;
       save(); dlg().close(); renderAll();
       toast(idx >= 0 ? 'Race updated' : (r.status === 'planned' ? 'Added to his plan' : 'Race logged — Aroo!'));
     });
@@ -961,6 +1096,8 @@
       const r = state.races.find(x => x.id === id);
       if (!r || !confirm(`Delete “${r.name}”?`)) return;
       state.races = state.races.filter(x => x.id !== id);
+      photoSession.saved = true;
+      if (hasPhotos()) PhotoStore.removeForRace(id).catch(() => {});
       save(); dlg().close(); renderAll(); toast('Race deleted');
     });
     $('#geocodeRace').addEventListener('click', async () => {
@@ -978,6 +1115,57 @@
     $('#raceForm').location.addEventListener('input', () => {
       $('#raceForm').lat.value = ''; $('#raceForm').lon.value = '';
       $('#geocodeStatus').textContent = '';
+    });
+
+    // Photos
+    dlg().addEventListener('close', endPhotoSession);
+    $('#photoInput').addEventListener('change', (e) => { const files = e.target.files; addPhotosFromInput(files).finally(() => { e.target.value = ''; }); });
+    document.addEventListener('click', (e) => {
+      const rm = e.target.closest('[data-rm-photo]');
+      if (rm) {
+        e.stopPropagation();
+        const id = rm.dataset.rmPhoto;
+        photoSession.list = photoSession.list.filter(p => p.id !== id);
+        if (photoSession.added.includes(id)) { photoSession.added = photoSession.added.filter(x => x !== id); PhotoStore.remove([id]).catch(() => {}); }
+        else photoSession.removed.push(id);
+        renderDialogPhotos();
+        return;
+      }
+      const rp = e.target.closest('[data-race-photos]');
+      if (rp) { openViewer(racePhotos(rp.dataset.racePhotos), 0); return; }
+      const tile = e.target.closest('[data-photo]');
+      if (tile) {
+        const list = tile.dataset.ctx === 'dialog' ? photoSession.list : (viewer.gallery || []);
+        openViewer(list, list.findIndex(p => p.id === tile.dataset.photo));
+      }
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      const tile = e.target.closest && e.target.closest('[data-photo]');
+      if (tile && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); tile.click(); }
+      if ($('#photoViewer').open) {
+        if (e.key === 'ArrowLeft' && viewer.i > 0) { viewer.i--; showViewerPhoto(); }
+        if (e.key === 'ArrowRight' && viewer.i < viewer.list.length - 1) { viewer.i++; showViewerPhoto(); }
+      }
+    });
+    $('#photoViewer').addEventListener('click', (e) => {
+      const act = e.target.closest('[data-viewer]');
+      if (!act) return;
+      const a = act.dataset.viewer;
+      if (a === 'close') $('#photoViewer').close();
+      if (a === 'prev' && viewer.i > 0) { viewer.i--; showViewerPhoto(); }
+      if (a === 'next' && viewer.i < viewer.list.length - 1) { viewer.i++; showViewerPhoto(); }
+      if (a === 'save') saveViewerPhoto();
+    });
+    $('#photoViewer').addEventListener('close', () => { if (viewer.url) { URL.revokeObjectURL(viewer.url); viewer.url = null; } $('#viewerImg').removeAttribute('src'); });
+    // Swipe left/right in the viewer
+    let touchX = null;
+    $('#photoViewer').addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+    $('#photoViewer').addEventListener('touchend', (e) => {
+      if (touchX == null) return;
+      const dx = e.changedTouches[0].clientX - touchX; touchX = null;
+      if (Math.abs(dx) < 50) return;
+      if (dx < 0 && viewer.i < viewer.list.length - 1) { viewer.i++; showViewerPhoto(); }
+      if (dx > 0 && viewer.i > 0) { viewer.i--; showViewerPhoto(); }
     });
 
     // Profile
@@ -1028,14 +1216,21 @@
     });
 
     // Backup
-    $('#exportData').addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    $('#exportData').addEventListener('click', async () => {
+      const withPhotos = $('#backupPhotos').checked && hasPhotos();
+      let payload = state, nPhotos = 0;
+      if (withPhotos) {
+        $('#backupStatus').textContent = 'Preparing backup with photos…';
+        try { const photos = await PhotoStore.exportAll(); nPhotos = photos.length; payload = Object.assign({}, state, { photos }); }
+        catch (e) { $('#backupStatus').textContent = 'Could not read photos — backing up races only.'; }
+      }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `spartan-tracker-backup-${todayISO()}.json`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-      $('#backupStatus').textContent = `Backup downloaded (${state.races.length} races).`;
+      $('#backupStatus').textContent = `Backup downloaded (${state.races.length} races${withPhotos ? `, ${nPhotos} photos` : ''}).`;
     });
     $('#importData').addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -1044,15 +1239,22 @@
       try {
         const parsed = JSON.parse(await file.text());
         const next = normalizeState(parsed);
-        if (!confirm(`Replace the data on this device with this backup (${next.races.length} races)?`)) return;
-        state = next; save(); applyTheme(); renderAll();
-        $('#backupStatus').textContent = `Restored ${next.races.length} races.`;
+        const photos = Array.isArray(parsed.photos) ? parsed.photos : null;
+        if (!confirm(`Replace the data on this device with this backup (${next.races.length} races${photos ? `, ${photos.length} photos` : ''})?`)) return;
+        state = next; save(); applyTheme();
+        let nPhotos = 0;
+        if (photos && hasPhotos()) { $('#backupStatus').textContent = 'Restoring photos…'; nPhotos = await PhotoStore.importAll(photos); }
+        await refreshPhotoIndex();
+        renderAll();
+        $('#backupStatus').textContent = `Restored ${next.races.length} races${photos ? ` and ${nPhotos} photos` : ''}.`;
         toast('Backup restored');
       } catch (err) { $('#backupStatus').textContent = 'That file is not a valid tracker backup.'; }
     });
     $('#resetData').addEventListener('click', () => {
-      if (!confirm('Erase all races and profile info on this device? This cannot be undone.')) return;
-      state = defaultState(); save(); applyTheme(); renderAll(); toast('Data erased');
+      if (!confirm('Erase all races, photos and profile info on this device? This cannot be undone.')) return;
+      state = defaultState(); save(); applyTheme();
+      if (hasPhotos()) { PhotoStore.clear().catch(() => {}); photoIndex = new Map(); }
+      renderAll(); toast('Data erased');
     });
   }
 
@@ -1066,6 +1268,14 @@
       if (res.ok) events = await res.json();
     } catch (e) { /* offline or file:// — finder shows a note */ }
     $('#officialFinder').href = events.findRaceUrl || $('#officialFinder').href;
+    await refreshPhotoIndex();
+    // Tidy up photos left behind by races that no longer exist.
+    if (hasPhotos()) {
+      const ids = new Set(state.races.map(r => r.id));
+      const orphans = [];
+      for (const [rid, list] of photoIndex) if (!ids.has(rid)) orphans.push(...list.map(p => p.id));
+      if (orphans.length) { PhotoStore.remove(orphans).catch(() => {}); for (const [rid] of photoIndex) if (!ids.has(rid)) photoIndex.delete(rid); }
+    }
     renderAll();
     let tab = 'dashboard';
     try { tab = localStorage.getItem(STORE_KEY + '.tab') || 'dashboard'; } catch (e) { /* ignore */ }

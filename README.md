@@ -9,12 +9,13 @@ A personal performance tracker for Spartan races. It's a small static website wi
 - **Race Map**: every race he's done (★) or planned (⚑), his home (⌂), and optionally all upcoming Spartan events.
 - **Find Races**: upcoming Spartan events filtered by distance from home, race type (including Kids), or full Trifecta weekends, with a one-tap "Add to plan" and links to register on spartan.com.
 - **Profile & Backup**: name, birth year, home town, season goal, backup/restore, and the list of saved suggestions.
+- **Photos**: add photos to any race from the phone's camera roll. They're resized and saved on the device, shown in a Race photos gallery on the dashboard and in a full-screen viewer (swipe, save/share), and included in backups when "Include photos" is ticked.
 - **Race day**: on the day of a planned race the dashboard shows a race-day banner with a **Log results** button. Planned races whose date has passed show a "How did it go?" reminder.
 - **💡 Suggest a change**: a button on every page. Suggestions can be saved on the device, texted or shared through the phone's share menu, or sent as a pre-filled GitHub issue on this repo (labelled `feedback`). To send them somewhere else, change `FEEDBACK_REPO` at the top of `js/app.js`.
 
 ## Where the data lives
 
-Race data is saved **only in the browser** (localStorage) of the device being used. Nothing is uploaded. To move it to another device, use **Profile & Backup → Download backup**, then **Restore backup** on the other device. Download a backup now and then in case the browser data gets cleared.
+Race data and photos are saved **only in the browser** (localStorage) of the device being used. Nothing is uploaded. To move it to another device, use **Profile & Backup → Download backup**, then **Restore backup** on the other device. Download a backup now and then in case the browser data gets cleared.
 
 The site sends requests to only three outside services: the CDN (cdnjs) for the Leaflet and Chart.js libraries, OpenStreetMap for map tiles, and Nominatim (OpenStreetMap) when you tap "Look up" or "Find on map" for a town name.
 

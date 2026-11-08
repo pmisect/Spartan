@@ -52,6 +52,10 @@
       <div id="nextRace" class="card next-race hidden"></div>
 
       <div class="kpis" id="kpis"></div>
+      <div class="card hidden" id="galleryCard">
+        <div class="card-head"><h3>Race photos <span class="muted" id="galleryCount"></span></h3></div>
+        <div id="gallery" class="photo-grid"></div>
+      </div>
 
       <div class="grid-2">
         <div class="card">
@@ -96,6 +100,7 @@
           <div id="badges" class="badges"></div>
         </div>
       </div>
+
     </section>
 
     <!-- RACES -->
@@ -206,9 +211,10 @@
         </div>
         <div class="card">
           <h3>Backup &amp; move between devices</h3>
-          <p class="small">Race data is saved <strong>only in this browser</strong> on this device. Nothing is uploaded or shared. To use it on another phone or computer, download a backup here and restore it there.</p>
+          <p class="small">Races and photos are saved <strong>only in this browser</strong> on this device. Nothing is uploaded or shared. To use them on another phone or computer, download a backup here and restore it there. On iPhone, add this site to the Home Screen: Safari can clear saved data for websites you haven't opened in a while, and Home Screen apps are protected from that.</p>
           <div class="row gap wrap">
             <button class="btn btn-primary" id="exportData">Download backup</button>
+            <label class="check small"><input type="checkbox" id="backupPhotos" checked> Include photos</label>
             <label class="btn">Restore backup<input type="file" id="importData" accept="application/json,.json" hidden></label>
           </div>
           <p class="muted small" id="backupStatus"></p>
@@ -286,6 +292,16 @@
         </div>
       </fieldset>
       <label>Notes <textarea name="notes" rows="2" placeholder="Weather, mud level, what went well, what to work on…"></textarea></label>
+      <fieldset class="results">
+        <legend>Photos</legend>
+        <div id="dialogPhotos" class="photo-grid photo-grid-edit"></div>
+        <div class="row gap wrap" style="margin-top:8px">
+          <label class="btn" id="addPhotosBtn">📷 Add photos
+            <input type="file" id="photoInput" accept="image/*" multiple hidden>
+          </label>
+          <span class="small muted" id="photoStatus"></span>
+        </div>
+      </fieldset>
       <div class="dialog-foot">
         <button type="button" class="btn btn-danger hidden" id="deleteRace">Delete</button>
         <span class="spacer"></span>
@@ -303,6 +319,24 @@
     <option>Beater</option><option>Ape Hanger</option><option>Z-Wall</option><option>Tyrolean Traverse</option>
     <option>Bender</option><option>Dunk Wall</option><option>Cargo Net</option><option>Plate Drag</option>
   </datalist>
+
+  <!-- PHOTO VIEWER -->
+  <dialog id="photoViewer" class="viewer">
+    <div class="viewer-top">
+      <div class="viewer-cap"><strong id="viewerTitle"></strong><div class="small" id="viewerSub"></div></div>
+      <button type="button" class="btn btn-ghost viewer-btn" data-viewer="close" aria-label="Close">✕</button>
+    </div>
+    <div class="viewer-stage">
+      <button type="button" class="viewer-nav prev" data-viewer="prev" aria-label="Previous photo">‹</button>
+      <img id="viewerImg" alt="">
+      <button type="button" class="viewer-nav next" data-viewer="next" aria-label="Next photo">›</button>
+    </div>
+    <div class="viewer-bottom">
+      <span class="small" id="viewerCount"></span>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost viewer-btn" data-viewer="save">Save / share</button>
+    </div>
+  </dialog>
 
   <!-- FEEDBACK DIALOG -->
   <dialog id="feedbackDialog">
@@ -346,6 +380,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="js/photos.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
