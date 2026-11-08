@@ -11,6 +11,8 @@
   const FT_PER_M = 3.28084;
   // Where "Send to GitHub" feedback goes (owner/repo). Set to '' to hide that option.
   const FEEDBACK_REPO = 'pmisect/Spartan';
+  // Shown until a different name is saved in Profile.
+  const DEFAULT_ATHLETE = 'Christopher';
   const TYPICAL_OBSTACLES = { Sprint: 20, Super: 25, Beast: 30, Ultra: 60, Stadion: 20 };
   const RACE_TYPES = ['Kids', 'Sprint', 'Super', 'Beast', 'Ultra', 'Stadion', 'Trail', 'Other'];
   const TRIFECTA = [
@@ -161,13 +163,14 @@
   // ---------- Header ----------
   function renderHeader() {
     const p = state.profile;
-    $('#athleteName').textContent = p.name || 'Athlete';
+    const name = p.name || DEFAULT_ATHLETE;
+    $('#athleteName').textContent = name;
     const bits = [];
     if (p.birthYear) bits.push(`Age ${new Date().getFullYear() - p.birthYear}`);
     if (p.home?.label) bits.push(p.home.label.split(',')[0]);
     $('#athleteSub').textContent = bits.length ? bits.join(' · ') + ' · Aroo!' : 'Aroo! Log races, chase records, find the next one.';
     $('#unitToggle').textContent = distUnit();
-    document.title = p.name ? `${p.name}'s Spartan Tracker` : 'Spartan Race Tracker';
+    document.title = `${name}'s Spartan Tracker`;
   }
 
   // ---------- Dashboard ----------
@@ -787,7 +790,7 @@
   function openFeedback() {
     const f = $('#feedbackForm');
     f.reset();
-    f.elements.from.value = state.profile.name || '';
+    f.elements.from.value = state.profile.name || DEFAULT_ATHLETE;
     $('#feedbackStatus').textContent = '';
     $('#fbGithub').classList.toggle('hidden', !FEEDBACK_REPO);
     $('#feedbackDialog').showModal();
@@ -830,7 +833,7 @@
   function renderSettings() {
     const f = $('#profileForm');
     const p = state.profile;
-    f.name.value = p.name || '';
+    f.name.value = p.name || DEFAULT_ATHLETE;
     f.birthYear.value = p.birthYear || '';
     f.homeQuery.value = p.home?.query || '';
     f.goalRaces.value = p.goalRaces || '';
